@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+
+import boto3
+from tabulate import tabulate
+
+client = boto3.client('service-quotas')
+
+def get_services(next_token=None):
+    if next_token:
+        res = client.list_services(NextToken=next_token)
+    else:
+        res = client.list_services()
+    
+    services = [s['ServiceCode'] for s in res['Services']]
+   
+    if 'NextToken' in res:
+        services += get_services(res['NextToken'])
+
+    return services
+
+def get_service_quotas(service, next_token=None):
+    if next_token:
+        res = client.list_service_quotas(
+                ServiceCode=service,
+                NextToken=next_token)
+    else:
+        res = client.list_service_quotas(
+                ServiceCode=service)
+    
+    quotas = {}
+
+    for q in res['Quotas']:
+        quotas[f'{q["ServiceCode"]}-{q["QuotaCode"]}'] = {
+                'service': q['ServiceName'],
+                'quota': q['QuotaName'],
+                'value': q['Value']
+        }
+    
+    if 'NextToken' in res:
+        quotas.update(get_service_quotas(service, res['NextToken']))
+    
+    return quotas
+
+def get_default_quotas(service, next_token=None):
+    if next_token:
+        res = client.list_aws_default_service_quotas(
+                ServiceCode=service,
+                NextToken=next_token)
+    else:
+        res = client.list_aws_default_service_quotas(
+                ServiceCode=service)
+
+    quotas = {}
+
+    for q in res['Quotas']:
+        quotas[f'{q["ServiceCode"]}-{q["QuotaCode"]}'] = {
+                'service': q['ServiceName'],
+                'quota': q['QuotaName'],
+                'value': q['Value']
+        }
+
+    if 'NextToken' in res:
+        quotas.update(get_default_quotas(service, res['NextToken']))
+    
+    return quotas
+
+services = get_services()
+quotas = {}
+defaults = {}
+
+for service in services:
+    quotas.update(get_service_quotas(service))
+    defaults.update(get_default_quotas(service))
+
+res = []
+for k, v in quotas.items():
+    res.append({
+        'service': v['service'],
+        'quota': v['quota'],
+        'current': v['value'],
+        'default': defaults[k]['value'],
+        'changed': (v['value'] != defaults[k]['value'])
+    })
+
+header = res[0].keys()
+rows = [r.values() for r in res]
+
+print(tabulate(rows, header, tablefmt='grid'))
